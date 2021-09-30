@@ -1,0 +1,1126 @@
+<html>
+<head>
+<script>
+
+var hasLoadedBlocksImage = false;
+var hasDrawnBlocksImage = false;
+var canvasWidth = 527;
+// Measured in blocks.
+var blocksImageWidth = 3;
+var blocksImageHeight = 10;
+// Measured in pixels.
+var blockSpriteWidth = 17;
+var blockSpriteHeight = 19;
+var worldCells = [];
+var worldSize = 20;
+var cameraPos = new Pos(worldSize / 2, worldSize / 2, worldSize / 2, 5);
+var cameraOrientation;
+var cameraRadius = 2;
+var cameraBlockSprite;
+var cameraBlockMirror;
+var isCutAwayView = false;
+var gameIsPaused = false;
+var saveDataHasFocus = false;
+var gravityOffset = new Pos(0, 0, 0, 1);
+var playerMoveOrientationOffset = -2;
+var playerMoveDelay = 0;
+var lastPlayerMoveOffset;
+var inventoryItemTypeNameSet = ["Nothing", "Dirt", "Grass", "Player", "Stone", "Log", "Leaves", "Wireframe", "Obstacle"];
+var inventoryItemList = [];
+var selectedInventoryItem = -1;
+
+function addTag(type, parent)
+{
+var tag = document.createElement(type);
+parent.appendChild(tag);
+return tag;
+}
+
+function removeTag(tag)
+{
+var parentTag = tag.parentNode;
+parentTag.removeChild(tag);
+}
+
+function drawPixelList()
+{
+ctx.putImageData(imageData, 0, 0);
+}
+
+var pixelDepthList = [];
+
+function resetPixelList()
+{
+var index = 0;
+var depthIndex = 0;
+while (index < pixelList.length)
+{
+// Order: RGBA.
+pixelList[index] = 180;
+pixelList[index + 1] = 255;
+pixelList[index + 2] = 255;
+pixelList[index + 3] = 255;
+pixelDepthList[depthIndex] = 10000;
+index += 4;
+depthIndex += 1;
+}
+}
+
+function drawBlock(which, posX, posY, mirrorX, depth)
+{
+if (posX < 0 | posX + blockSpriteWidth > canvasWidth)
+{
+return;
+}
+posX = parseInt(posX);
+posY = parseInt(posY);
+var blocksPosX = (which % blocksImageWidth) * blockSpriteWidth;
+var blocksPosY = parseInt(which / blocksImageWidth) * blockSpriteHeight;
+if (!mirrorX)
+{
+var offsetY = 0;
+while (offsetY < blockSpriteHeight)
+{
+var depthIndex = posX + (posY + offsetY) * canvasWidth;
+var index = depthIndex * 4;
+var blocksIndex = (blocksPosX + (blocksPosY + offsetY) * blocksImageWidth * blockSpriteWidth) * 4;
+var offsetX = 0;
+while (offsetX < blockSpriteWidth)
+{
+var r = blocksPixelList[blocksIndex];
+var g = blocksPixelList[blocksIndex + 1];
+var b = blocksPixelList[blocksIndex + 2];
+if (!(r > 250 && g < 30 && b < 30))
+{
+var tempDepth = pixelDepthList[depthIndex];
+if (tempDepth > depth)
+{
+pixelList[index] = r;
+pixelList[index + 1] = g;
+pixelList[index + 2] = b;
+pixelDepthList[depthIndex] = depth;
+}
+}
+index += 4;
+depthIndex += 1;
+blocksIndex += 4;
+offsetX += 1;
+}
+offsetY += 1;
+}
+} else {
+var offsetY = 0;
+while (offsetY < blockSpriteHeight)
+{
+var depthIndex = (posX + blockSpriteWidth - 1) + (posY + offsetY) * canvasWidth;
+var index = depthIndex * 4;
+var blocksIndex = (blocksPosX + (blocksPosY + offsetY) * blocksImageWidth * blockSpriteWidth) * 4;
+var offsetX = blockSpriteWidth - 1;
+while (offsetX > -1)
+{
+var r = blocksPixelList[blocksIndex];
+var g = blocksPixelList[blocksIndex + 1];
+var b = blocksPixelList[blocksIndex + 2];
+if (!(r > 250 && g < 30 && b < 30))
+{
+var tempDepth = pixelDepthList[depthIndex];
+if (tempDepth > depth)
+{
+pixelList[index] = r;
+pixelList[index + 1] = g;
+pixelList[index + 2] = b;
+pixelDepthList[depthIndex] = depth;
+}
+}
+index -= 4;
+depthIndex -= 1;
+blocksIndex += 4;
+offsetX -= 1;
+}
+offsetY += 1;
+}
+}
+}
+
+// A point in the 4th dimension.
+function Pos(w, x, y, z)
+{
+this.w = w;
+this.x = x;
+this.y = y;
+this.z = z;
+}
+
+Pos.prototype.copy = function()
+{
+return new Pos(this.w, this.x, this.y, this.z);
+}
+
+Pos.prototype.shift = function(offset)
+{
+this.w += offset.w;
+this.x += offset.x;
+this.y += offset.y;
+this.z += offset.z;
+}
+
+Pos.prototype.multiplyByNumber = function(number)
+{
+this.w *= number;
+this.x *= number;
+this.y *= number;
+this.z *= number;
+}
+
+Pos.prototype.isEqual = function(pos)
+{
+return (this.w == pos.w && this.x == pos.x && this.y == pos.y && this.z == pos.z);
+}
+
+Pos.prototype.clampRange = function(range)
+{
+if (this.w < -range)
+{
+this.w = -range;
+}
+if (this.w > range)
+{
+this.w = range;
+}
+if (this.x < -range)
+{
+this.x = -range;
+}
+if (this.x > range)
+{
+this.x = range;
+}
+if (this.y < -range)
+{
+this.y = -range;
+}
+if (this.y > range)
+{
+this.y = range;
+}
+if (this.z < -range)
+{
+this.z = -range;
+}
+if (this.z > range)
+{
+this.z = range;
+}
+}
+
+Pos.prototype.isInWorld = function()
+{
+return this.w > -1 && this.w < worldSize && this.x > -1 && this.x < worldSize && this.y > -1 && this.y < worldSize && this.z > -1 && this.z < worldSize
+}
+
+Pos.prototype.getWorldCellIndex = function()
+{
+return this.w + this.x * worldSize + this.y * worldSize * worldSize + this.z * Math.pow(worldSize, 3);
+}
+
+function setCameraOrientation(orientation)
+{
+cameraOrientation = orientation;
+while (cameraOrientation < 0)
+{
+cameraOrientation += 16;
+}
+cameraBlockSprite = cameraOrientation % 4;
+cameraBlockMirror = (cameraBlockSprite == 1);
+if (cameraBlockSprite > 2)
+{
+cameraBlockSprite = 1;
+}
+}
+
+setCameraOrientation(3);
+
+function shiftCameraOrientation(offset)
+{
+setCameraOrientation(cameraOrientation + offset);
+}
+
+function getOrientationQuadrant(orientation)
+{
+while (orientation < 0)
+{
+orientation += 16;
+}
+return parseInt((orientation % 16) / 4);
+}
+
+function rotateOffsetByOrientation(offset, orientation)
+{
+var tempQuadrant = getOrientationQuadrant(orientation);
+if (tempQuadrant == 1)
+{
+var oldOffsetX = offset.x;
+offset.x = offset.y;
+offset.y = -oldOffsetX;
+}
+if (tempQuadrant == 2)
+{
+offset.x = -offset.x;
+offset.y = -offset.y;
+}
+if (tempQuadrant == 3)
+{
+var oldOffsetX = offset.x;
+offset.x = -offset.y;
+offset.y = oldOffsetX;
+}
+}
+
+function getWorldCell(pos)
+{
+if (pos.isInWorld())
+{
+var tempIndex = pos.getWorldCellIndex();
+return worldCells[tempIndex];
+}
+return 0;
+}
+
+function setWorldCell(pos, value)
+{
+if (pos.isInWorld())
+{
+var tempIndex = pos.getWorldCellIndex();
+worldCells[tempIndex] = value;
+}
+return 0;
+}
+
+function generateHeightMap()
+{
+var output = [];
+var index = 0;
+var endIndex = Math.pow(worldSize, 3);
+while (index < endIndex)
+{
+output.push(11);
+index += 1;
+}
+var hillCount = 0;
+while (hillCount < 40)
+{
+var pos = new Pos(parseInt(Math.random() * worldSize), parseInt(Math.random() * worldSize), parseInt(Math.random() * worldSize), 0);
+var tempRadius = 1 + parseInt(Math.random() * 3);
+var offset = new Pos(-tempRadius, -tempRadius, -tempRadius, 0);
+while (offset.y < tempRadius + 1)
+{
+var tempDistance = Math.sqrt(offset.w * offset.w + offset.x * offset.x + offset.y * offset.y);
+if (tempDistance < tempRadius + 0.5)
+{
+var tempPos = pos.copy();
+tempPos.shift(offset);
+if (tempPos.isInWorld())
+{
+var tempIndex = tempPos.getWorldCellIndex();
+output[tempIndex] -= 1;
+}
+}
+offset.w += 1;
+if (offset.w > tempRadius)
+{
+offset.w = -tempRadius;
+offset.x += 1;
+if (offset.x > tempRadius)
+{
+offset.x = -tempRadius;
+offset.y += 1;
+}
+}
+}
+hillCount += 1;
+}
+return output;
+}
+
+function generateTree(pos)
+{
+var count = 0;
+while (getWorldCell(pos) == 0 && count < 200)
+{
+pos.shift(gravityOffset);
+}
+pos.shift(new Pos(0, 0, 0, -1));
+setWorldCell(pos, 5);
+pos.shift(new Pos(0, 0, 0, -1));
+setWorldCell(pos, 5);
+var tempRadius = 1;
+var offset = new Pos(-tempRadius, -tempRadius, -tempRadius, -1);
+while (offset.z < 1)
+{
+var tempPos = pos.copy();
+tempPos.shift(offset);
+if (!tempPos.isEqual(pos))
+{
+setWorldCell(tempPos, 6);
+}
+offset.w += 1;
+if (offset.w > tempRadius)
+{
+offset.w = -tempRadius;
+offset.x += 1;
+if (offset.x > tempRadius)
+{
+offset.x = -tempRadius;
+offset.y += 1;
+if (offset.y > tempRadius)
+{
+offset.y = -tempRadius;
+offset.z += 1;
+}
+}
+}
+}
+}
+
+function generateTrees()
+{
+var count = 0;
+while (count < 40)
+{
+var tempPos = new Pos(parseInt(Math.random() * worldSize), parseInt(Math.random() * worldSize), parseInt(Math.random() * worldSize), 0);
+generateTree(tempPos);
+count += 1;
+}
+}
+
+function generateWorld()
+{
+worldCells = [];
+var heightMap = generateHeightMap();
+var heightMapIndex = 0;
+var pos = new Pos(0, 0, 0, 0);
+var index = 0;
+var endIndex = Math.pow(worldSize, 4);
+while (index < endIndex)
+{
+var tempHeight = heightMap[heightMapIndex];
+if (pos.z == tempHeight)
+{
+worldCells[index] = 2;
+}
+if (pos.z == tempHeight + 1)
+{
+worldCells[index] = 1;
+}
+if (pos.z > tempHeight + 1)
+{
+worldCells[index] = 4;
+}
+if (pos.z < tempHeight)
+{
+worldCells[index] = 0;
+}
+heightMapIndex += 1;
+index += 1;
+pos.w += 1;
+if (pos.w > worldSize - 1)
+{
+pos.w = 0;
+pos.x += 1;
+if (pos.x > worldSize - 1)
+{
+pos.x = 0;
+pos.y += 1;
+if (pos.y > worldSize - 1)
+{
+pos.y = 0;
+pos.z += 1;
+heightMapIndex = 0;
+}
+}
+}
+}
+generateTrees();
+}
+
+function drawWorldCell(which, screenPosX, screenPosY, depth)
+{
+if (which > 0)
+{
+drawBlock((which - 1) * blocksImageWidth + cameraBlockSprite, screenPosX, screenPosY, cameraBlockMirror, depth);
+}
+}
+
+var volumeStartScreenPosX = 255;
+var volumeStartScreenPosY = 50;
+var volumeScreenSpacing = 105;
+
+function drawCameraView()
+{
+var tempActionPos = cameraPos.copy();
+tempActionPos.shift(actionOffset);
+var offset = new Pos(-cameraRadius, 0, 0, 0);
+while (offset.w < cameraRadius + 1)
+{
+offset.x = -cameraRadius;
+while (offset.x < cameraRadius + 1)
+{
+offset.y = -cameraRadius;
+while (offset.y < cameraRadius + 1)
+{
+offset.z = -cameraRadius;
+while (offset.z < cameraRadius + 1)
+{
+var pos = cameraPos.copy();
+var rotatedOffset = offset.copy();
+rotateOffsetByOrientation(rotatedOffset, cameraOrientation);
+pos.shift(rotatedOffset);
+var tempWorldCell = getWorldCell(pos);
+var spaceOffset = offset.copy();
+if (playerMoveDelay > 0)
+{
+var tempOffset = lastPlayerMoveOffset.copy();
+rotateOffsetByOrientation(tempOffset, -(cameraOrientation + playerMoveOrientationOffset - 1));
+tempOffset.multiplyByNumber(playerMoveDelay / 4.0);
+spaceOffset.shift(tempOffset);
+}
+if (isCutAwayView)
+{
+var shouldCutAway;
+if (cameraOrientation % 4 > 1)
+{
+shouldCutAway = (offset.y < 1 && offset.z < 1);
+} else {
+shouldCutAway = (offset.x > -1 && offset.z < 1);
+}
+if (shouldCutAway)
+{
+if (tempWorldCell != 0)
+{
+tempWorldCell = 0;
+if (offset.z > -2)
+{
+if (offset.w != 0)
+{
+if (offset.x == 0 && offset.y == 0)
+{
+tempWorldCell = 8;
+}
+} else {
+if (offset.x == 0 && offset.y < 2 && offset.y > -2)
+{
+tempWorldCell = 8;
+}
+if (offset.y == 0 && offset.x < 2 && offset.x > -2)
+{
+tempWorldCell = 8;
+}
+}
+}
+}
+}
+}
+if (shiftKeyIsHeld)
+{
+if (pos.isEqual(tempActionPos))
+{
+tempWorldCell = 7;
+}
+}
+if (cameraBlockSprite == 0)
+{
+var screenPosX = volumeStartScreenPosX + spaceOffset.w * volumeScreenSpacing + spaceOffset.y * 13;
+var screenPosY = volumeStartScreenPosY + spaceOffset.x * 5 + spaceOffset.z * 12;
+drawWorldCell(tempWorldCell, screenPosX, screenPosY, -spaceOffset.x + spaceOffset.z);
+}
+if (cameraBlockSprite == 1)
+{
+if (cameraBlockMirror)
+{
+var screenPosX = volumeStartScreenPosX + spaceOffset.w * volumeScreenSpacing + spaceOffset.x * 5 + spaceOffset.y * 11;
+var screenPosY = volumeStartScreenPosY  + spaceOffset.x * 5 - spaceOffset.y * 3 + spaceOffset.z * 12;
+drawWorldCell(tempWorldCell, screenPosX, screenPosY, spaceOffset.y - spaceOffset.x + spaceOffset.z);
+} else {
+var screenPosX = volumeStartScreenPosX + spaceOffset.w * volumeScreenSpacing + spaceOffset.x * 11 + spaceOffset.y * 5;
+var screenPosY = volumeStartScreenPosY  + spaceOffset.x * 3 - spaceOffset.y * 5 + spaceOffset.z * 12;
+drawWorldCell(tempWorldCell, screenPosX, screenPosY, spaceOffset.y - spaceOffset.x + spaceOffset.z);
+}
+}
+if (cameraBlockSprite == 2)
+{
+var screenPosX = volumeStartScreenPosX + spaceOffset.w * volumeScreenSpacing + spaceOffset.x * 9 + spaceOffset.y * 9;
+var screenPosY = volumeStartScreenPosY  + spaceOffset.x * 4 - spaceOffset.y * 4 + spaceOffset.z * 12;
+drawWorldCell(tempWorldCell, screenPosX, screenPosY, spaceOffset.y - spaceOffset.x + spaceOffset.z);
+}
+offset.z += 1;
+}
+offset.y += 1;
+}
+offset.x += 1;
+}
+offset.w += 1;
+}
+drawBlock(6 + cameraBlockSprite, volumeStartScreenPosX, volumeStartScreenPosY, cameraBlockMirror, 0);
+if (playerMoveDelay > 0)
+{
+playerMoveDelay -= 1;
+}
+}
+
+function InventoryItem(type)
+{
+this.type = type;
+var tempTag = document.getElementById("inventoryDiv");
+this.tag = addTag("div", tempTag);
+this.tag.setAttribute("class", "inventoryItem");
+this.typeNameTag = addTag("div", this.tag);
+this.typeNameTag.style.float = "left";
+this.typeNameTag.style.marginRight = "10px";
+this.typeNameTag.innerHTML = inventoryItemTypeNameSet[this.type];
+this.amountTag = addTag("div", this.tag);
+this.amountTag.style.float = "left";
+var tempTag = addTag("br", this.tag);
+tempTag.style.clear = "both";
+var tempObject = this;
+this.tag.onclick = function()
+{
+selectInventoryItem(tempObject);
+}
+this.setAmount(1);
+inventoryItemList.push(this);
+}
+
+InventoryItem.prototype.setAmount = function(amount)
+{
+this.amount = amount;
+this.amountTag.innerHTML = "x" + this.amount;
+}
+
+InventoryItem.prototype.incrementAmount = function()
+{
+this.setAmount(this.amount + 1);
+}
+
+InventoryItem.prototype.decrementAmount = function()
+{
+this.setAmount(this.amount - 1);
+if (this.amount < 1)
+{
+removeTag(this.tag);
+var index = 0;
+while (index < inventoryItemList.length)
+{
+var tempInventoryItem = inventoryItemList[index];
+if (tempInventoryItem == this)
+{
+inventoryItemList.splice(index, 1);
+}
+index += 1;
+}
+if (inventoryItemList.length < 1)
+{
+selectedInventoryItem = -1;
+} else {
+selectInventoryItem(inventoryItemList[0]);
+}
+}
+}
+
+function selectInventoryItem(inventoryItem)
+{
+if (selectedInventoryItem != -1)
+{
+selectedInventoryItem.tag.style.outline = "3px white solid";
+}
+selectedInventoryItem = inventoryItem;
+selectedInventoryItem.tag.style.outline = "3px black solid";
+}
+
+function getInventoryItemByType(type)
+{
+var index = 0;
+while (index < inventoryItemList.length)
+{
+var tempInventoryItem = inventoryItemList[index];
+if (tempInventoryItem.type == type)
+{
+return tempInventoryItem;
+}
+index += 1;
+}
+return -1;
+}
+
+function incrementInventoryItemAmountByType(type)
+{
+var tempInventoryItem = getInventoryItemByType(type);
+if (tempInventoryItem == -1)
+{
+var tempInventoryItem = new InventoryItem(type);
+if (selectedInventoryItem == -1)
+{
+selectInventoryItem(tempInventoryItem);
+}
+} else {
+tempInventoryItem.incrementAmount();
+}
+}
+
+function decrementInventoryItemAmountByType(type)
+{
+var tempInventoryItem = getInventoryItemByType(type);
+if (tempInventoryItem == -1)
+{
+return false;
+} else {
+tempInventoryItem.decrementAmount();
+return true;
+}
+}
+
+function decrementSelectedInventoryItem()
+{
+if (selectedInventoryItem == -1)
+{
+return false;
+} else {
+selectedInventoryItem.decrementAmount();
+return true;
+}
+}
+
+function removeAllInventoryItems()
+{
+var index = 0;
+while (index < inventoryItemList.length)
+{
+var tempInventoryItem = inventoryItemList[index];
+removeTag(tempInventoryItem.tag);
+index += 1;
+}
+inventoryItemList = [];
+selectedInventoryItem = -1;
+}
+
+var characterSet = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ@$";
+
+function convertNumberToCharacter(number)
+{
+return characterSet.substring(number, number + 1);
+}
+
+function convertCharacterToNumber(character)
+{
+return characterSet.indexOf(character);
+}
+
+function getSaveData()
+{
+var output = cameraPos.w + "," + cameraPos.x + "," + cameraPos.y + "," + cameraPos.z + ";";
+var index = 0;
+while (index < inventoryItemList.length)
+{
+var tempInventoryItem = inventoryItemList[index];
+if (index > 0)
+{
+output = output + ",";
+}
+output = output + tempInventoryItem.type + "," + tempInventoryItem.amount;
+index += 1;
+}
+output = output + ";";
+var index = 0;
+while (index < worldCells.length)
+{
+var currentWorldCell = worldCells[index];
+index += 1;
+var count = 1;
+while (index < worldCells.length && count < 63)
+{
+if (worldCells[index] != currentWorldCell)
+{
+break;
+}
+index += 1;
+count += 1;
+}
+if (count < 4)
+{
+var tempCount = 0;
+while (tempCount < count)
+{
+output = output + convertNumberToCharacter(currentWorldCell);
+tempCount += 1;
+}
+} else {
+output = output + "{" + convertNumberToCharacter(count) + convertNumberToCharacter(currentWorldCell);
+}
+}
+return output;
+}
+
+function setSaveData(data)
+{
+var startIndex = 0;
+var endIndex = data.indexOf(";", startIndex);
+var tempText = data.substring(startIndex, endIndex);
+var tempList = tempText.split(",");
+cameraPos.w = parseInt(tempList[0]);
+cameraPos.x = parseInt(tempList[1]);
+cameraPos.y = parseInt(tempList[2]);
+cameraPos.z = parseInt(tempList[3]);
+var startIndex = endIndex + 1;
+var endIndex = data.indexOf(";", startIndex);
+var tempText = data.substring(startIndex, endIndex);
+var tempList = tempText.split(",");
+removeAllInventoryItems();
+var tempIndex = 0;
+while (tempIndex < tempList.length)
+{
+var tempType = parseInt(tempList[tempIndex]);
+var tempAmount = parseInt(tempList[tempIndex + 1]);
+var tempInventoryItem = new InventoryItem(tempType);
+tempInventoryItem.setAmount(tempAmount);
+if (tempIndex == 0)
+{
+selectInventoryItem(tempInventoryItem);
+}
+tempIndex += 2;
+}
+var index = endIndex + 1;
+var worldCellsIndex = 0;
+while (index < data.length)
+{
+var tempCharacter = data.substring(index, index + 1);
+index += 1;
+if (tempCharacter == "{")
+{
+tempCharacter = data.substring(index, index + 1);
+index += 1;
+var amount = convertCharacterToNumber(tempCharacter);
+tempCharacter = data.substring(index, index + 1);
+index += 1;
+var worldCell = convertCharacterToNumber(tempCharacter);
+var count = 0;
+while (count < amount)
+{
+worldCells[worldCellsIndex] = worldCell;
+count += 1;
+worldCellsIndex += 1;
+}
+} else {
+var worldCell = convertCharacterToNumber(tempCharacter);
+worldCells[worldCellsIndex] = worldCell;
+worldCellsIndex += 1;
+}
+}
+}
+
+function movePlayer(offset)
+{
+if (playerMoveDelay < 1)
+{
+var tempPos = cameraPos.copy();
+tempPos.shift(offset);
+var tempWorldCell = getWorldCell(tempPos);
+if (tempWorldCell != 0)
+{
+offset.z -= 1;
+tempPos.shift(new Pos(0, 0, 0, -1));
+var tempWorldCell = getWorldCell(tempPos);
+var tempPos2 = cameraPos.copy();
+tempPos2.shift(new Pos(0, 0, 0, -1));
+var tempWorldCell2 = getWorldCell(tempPos2);
+if (tempWorldCell != 0 | tempWorldCell2 != 0)
+{
+return;
+}
+}
+cameraPos = tempPos;
+playerMoveDelay = 3;
+lastPlayerMoveOffset = offset;
+}
+}
+
+var playerIsOnGround = false;
+var shiftKeyIsHeld = false;
+var actionOffset = new Pos(0, 0, 0, 0);
+
+function movePlayerOrChangeActionOffset(offset)
+{
+if (shiftKeyIsHeld)
+{
+if (offset.w != 0)
+{
+actionOffset.w += offset.w;
+}
+if (offset.x != 0)
+{
+actionOffset.x += offset.x;
+}
+if (offset.y != 0)
+{
+actionOffset.y += offset.y;
+}
+if (offset.z != 0)
+{
+actionOffset.z += offset.z;
+}
+actionOffset.clampRange(1);
+} else {
+movePlayer(offset);
+}
+}
+
+function keyDownEvent(event)
+{
+if (gameIsPaused | saveDataHasFocus)
+{
+return;
+}
+var keyCode = event.which;
+if (keyCode == 67)
+{
+isCutAwayView = !isCutAwayView;
+}
+// Shift.
+if (keyCode == 16)
+{
+actionOffset = new Pos(0, 0, 0, 0);
+shiftKeyIsHeld = true;
+}
+// Right.
+if (keyCode == 39)
+{
+shiftCameraOrientation(1);
+}
+// Left.
+if (keyCode == 37)
+{
+shiftCameraOrientation(-1);
+}
+if (playerIsOnGround)
+{
+// W.
+if (keyCode == 87)
+{
+var tempOffset = new Pos(0, 0, 1, 0);
+rotateOffsetByOrientation(tempOffset, cameraOrientation + playerMoveOrientationOffset);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// A.
+if (keyCode == 65)
+{
+var tempOffset = new Pos(0, -1, 0, 0);
+rotateOffsetByOrientation(tempOffset, cameraOrientation + playerMoveOrientationOffset);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// S.
+if (keyCode == 83)
+{
+var tempOffset = new Pos(0, 0, -1, 0);
+rotateOffsetByOrientation(tempOffset, cameraOrientation + playerMoveOrientationOffset);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// D.
+if (keyCode == 68)
+{
+var tempOffset = new Pos(0, 1, 0, 0);
+rotateOffsetByOrientation(tempOffset, cameraOrientation + playerMoveOrientationOffset);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// Q.
+if (keyCode == 81)
+{
+var tempOffset = new Pos(-1, 0, 0, 0);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// E.
+if (keyCode == 69)
+{
+var tempOffset = new Pos(1, 0, 0, 0);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// R.
+if (keyCode == 82)
+{
+var tempOffset = new Pos(0, 0, 0, -1);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+// F.
+if (keyCode == 70)
+{
+var tempOffset = new Pos(0, 0, 0, 1);
+movePlayerOrChangeActionOffset(tempOffset);
+}
+}
+}
+
+function processAction()
+{
+if (actionOffset.isEqual(new Pos(0, 0, 0, 0)))
+{
+return;
+}
+var pos = cameraPos.copy();
+pos.shift(actionOffset);
+var worldCell = getWorldCell(pos);
+if (worldCell == 0)
+{
+var tempWorldCell = selectedInventoryItem.type;
+if (decrementSelectedInventoryItem())
+{
+setWorldCell(pos, tempWorldCell);
+}
+} else {
+setWorldCell(pos, 0);
+incrementInventoryItemAmountByType(worldCell);
+}
+}
+
+function keyUpEvent(event)
+{
+if (gameIsPaused | saveDataHasFocus)
+{
+return;
+}
+var keyCode = event.which;
+// Shift.
+if (keyCode == 16)
+{
+processAction();
+shiftKeyIsHeld = false;
+actionOffset = new Pos(0, 0, 0, 0);
+}
+}
+
+var oldCameraPos = new Pos(0, 0, 0, 0);
+
+function timerEvent()
+{
+if (gameIsPaused)
+{
+return;
+}
+if (hasLoadedBlocksImage)
+{
+if (!hasDrawnBlocksImage)
+{
+imageCtx.drawImage(imageTag, 0, 0);
+hasDrawnBlocksImage = true;
+var tempImage = imageCtx.getImageData(0, 0, blocksImageWidth * blockSpriteWidth, blocksImageHeight * blockSpriteHeight);
+blocksPixelList = tempImage.data;
+} else {
+resetPixelList();
+var tempPos = cameraPos.copy();
+tempPos.shift(gravityOffset);
+var tempWorldCell = getWorldCell(tempPos);
+if (tempWorldCell == 0)
+{
+playerIsOnGround = false;
+movePlayer(gravityOffset);
+} else {
+playerIsOnGround = true;
+}
+drawCameraView();
+drawPixelList();
+if (!oldCameraPos.isEqual(cameraPos))
+{
+document.getElementById("positionDiv").innerHTML = "(" + cameraPos.w + ", " + cameraPos.x + ", " + cameraPos.y + ", " + cameraPos.z + ")";
+oldCameraPos = cameraPos.copy();
+}
+}
+}
+}
+
+setInterval("timerEvent()", 50);
+
+</script> 
+<style> 
+.title {
+color: black;
+font-family: arial;
+font-size: 18px;
+font-weight: bold;
+padding-top: 10px;
+padding-bottom: 10px;
+}
+a {
+color: black;
+}
+.inventoryItem {
+margin-top: 6px;
+border: 3px white solid;
+cursor: pointer;
+}
+</style> 
+</head> 
+<body style="background: #444444; color: black; font-family: Times; font-size: 16px;" onkeydown="keyDownEvent(event)" onkeyup="keyUpEvent(event)"> 
+<div style="width: 1060px; background: white; padding: 20px; margin-left: auto; margin-right: auto;">
+<span class="title">= = = 4D GAME = = =</span><br />
+By Jack Eisenmann
+<p>
+<canvas id="canvas" width="527" height="120" style="width: 1054px; height: 240px; style="background: #FF0000; border: 1px black solid;"></canvas>
+</p>
+<p>
+</p>
+<img id="blocksImage" src="blocks.png" onload="hasLoadedBlocksImage = true;" style="display: none;" />
+<canvas id="imageCanvas" width="200" height="200" style="background: #FF0000; border: 1px black solid; display: none;"></canvas>
+<div style="float: left; width: 200px;">
+<span class="title">= INVENTORY =</span>
+<div id="inventoryDiv" style="margin-top: 10px;">
+
+</div>
+</div>
+<div style="float: left; width: 200px; margin-left: 15px;">
+<span class="title">= POSITION =</span>
+<div id="positionDiv" style="margin-top: 10px;">
+
+</div>
+</div>
+<div style="float: left; width: 200px; margin-left: 15px;">
+<span class="title">= SAVE DATA =</span>
+<div style="margin-top: 10px;">
+<button onclick="document.getElementById('saveData').value = getSaveData();">Get Data</button><br />
+<textarea id="saveData" cols="20" rows="2" onfocus="saveDataHasFocus = true;" onblur="saveDataHasFocus = false;"></textarea><br />
+<button onclick="setSaveData(document.getElementById('saveData').value);">Set Data</button>
+</div>
+</div>
+<br style="clear: both;"/>
+<br />
+<button onclick="gameIsPaused = !gameIsPaused; if (gameIsPaused) {this.innerHTML = 'Continue';} else {this.innerHTML = 'Pause';}">Pause</button>
+<br />
+<br />
+<span class="title">= CONTROLS =</span>
+<p>
+<strong>W or S:</strong> Forward or backward<br />
+<strong>A or D:</strong> Left or right<br />
+<strong>R or F:</strong> Up or down<br />
+<strong>Q or E:</strong> Ana or kata<br />
+<strong>Left or right arrow keys:</strong> Rotate camera<br />
+<strong>Shift + direction</strong> Build or destroy<br />
+<strong>C:</strong> Toggle cut-away view<br />
+</p>
+<script>
+var canvas = document.getElementById("canvas");
+var ctx = canvas.getContext("2d");
+
+var imageCanvas = document.getElementById("imageCanvas");
+var imageCtx = imageCanvas.getContext("2d");
+var imageTag = document.getElementById("blocksImage");
+var blocksPixelList = imageCtx.data;
+
+var imageData = ctx.createImageData(canvasWidth, 256);
+var pixelList = imageData.data;
+
+generateWorld();
+
+</script>
+</div> 
+<div style="width: 1060px; margin-left: auto; margin-right: auto; margin-bottom: 50px;"> 
+<div style="background: white; text-align: center; width: 200px; margin-left: auto; padding-left: 20px; padding-right: 20px; padding-bottom: 20px; padding-top: 10px;"> 
+<a href="http://web.mac.com/teisenmann/ostracod/main.html">Return to the Ostracod Pond</a> 
+</div>
+</div> 
+</body> 
+</html>
